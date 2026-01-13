@@ -1,128 +1,142 @@
 """Flower ClientApp for federated learning on CIFAR-10."""
 
-from flwr.client import ClientApp
-from flwr.common import Context, Message
-from flwr.common.record import ArrayRecord, MetricRecord, RecordDict
+from collections import OrderedDict
+
+import torch
+from flwr.client import ClientApp, NumPyClient
+from flwr.common import Context
 
 from fl_boilerplate.task import Net, get_device, load_data, train, test
 from fl_boilerplate.tensorboard_utils import get_client_logger
 
+
+class FlowerClient(NumPyClient):
+    """Flower client for federated learning."""
+
+    def __init__(
+        self,
+        partition_id: int,
+        num_partitions: int,
+        local_epochs: int,
+        batch_size: int,
+        tensorboard_enabled: bool,
+        log_dir: str,
+    ):
+        self.partition_id = partition_id
+        self.num_partitions = num_partitions
+        self.local_epochs = local_epochs
+        self.batch_size = batch_size
+        self.tensorboard_enabled = tensorboard_enabled
+        self.log_dir = log_dir
+
+        # Initialize model and device
+        self.model = Net()
+        self.device = get_device()
+        self.model.to(self.device)
+
+        # Load data for this partition
+        self.trainloader, self.testloader = load_data(
+            partition_id, num_partitions, batch_size
+        )
+
+        print(f"[Client {partition_id}] Initialized on {self.device}")
+        print(f"[Client {partition_id}] Training samples: {len(self.trainloader.dataset)}")
+        print(f"[Client {partition_id}] Test samples: {len(self.testloader.dataset)}")
+
+    def get_parameters(self, config):
+        """Return model parameters as a list of numpy arrays."""
+        return [val.cpu().numpy() for val in self.model.state_dict().values()]
+
+    def set_parameters(self, parameters):
+        """Set model parameters from a list of numpy arrays."""
+        state_dict = OrderedDict(
+            {k: torch.from_numpy(v) for k, v in zip(self.model.state_dict().keys(), parameters)}
+        )
+        self.model.load_state_dict(state_dict, strict=True)
+
+    def fit(self, parameters, config):
+        """Train model on local data."""
+        self.set_parameters(parameters)
+
+        # Get training config
+        lr = config.get("lr", 0.01)
+        local_epochs = config.get("local_epochs", self.local_epochs)
+        server_round = config.get("server_round", 0)
+
+        print(f"[Client {self.partition_id}] Round {server_round}: Training for {local_epochs} epochs")
+
+        # Train the model
+        train_loss = train(
+            self.model,
+            self.trainloader,
+            local_epochs,
+            lr,
+            self.device,
+        )
+
+        print(f"[Client {self.partition_id}] Round {server_round}: Loss = {train_loss:.4f}")
+
+        # Log to TensorBoard
+        if self.tensorboard_enabled:
+            logger = get_client_logger(self.partition_id, log_dir=self.log_dir)
+            logger.log_scalar("train/loss", train_loss, server_round)
+            logger.flush()
+
+        # Return updated parameters and metrics
+        return (
+            self.get_parameters(config={}),
+            len(self.trainloader.dataset),
+            {"train_loss": train_loss, "server_round": server_round},
+        )
+
+    def evaluate(self, parameters, config):
+        """Evaluate model on local test data."""
+        self.set_parameters(parameters)
+
+        server_round = config.get("server_round", 0)
+
+        print(f"[Client {self.partition_id}] Round {server_round}: Evaluating")
+
+        # Evaluate the model
+        eval_loss, eval_accuracy = test(self.model, self.testloader, self.device)
+
+        print(f"[Client {self.partition_id}] Round {server_round}: Loss = {eval_loss:.4f}, Accuracy = {eval_accuracy:.4f}")
+
+        # Log to TensorBoard
+        if self.tensorboard_enabled:
+            logger = get_client_logger(self.partition_id, log_dir=self.log_dir)
+            logger.log_scalar("eval/loss", eval_loss, server_round)
+            logger.log_scalar("eval/accuracy", eval_accuracy, server_round)
+            logger.flush()
+
+        return (
+            eval_loss,
+            len(self.testloader.dataset),
+            {"eval_loss": eval_loss, "eval_acc": eval_accuracy, "server_round": server_round},
+        )
+
+
+def client_fn(context: Context):
+    """Create a Flower client for this partition."""
+    # Get node configuration
+    partition_id = context.node_config["partition-id"]
+    num_partitions = context.node_config["num-partitions"]
+
+    # Get run configuration
+    local_epochs = context.run_config.get("local-epochs", 1)
+    batch_size = context.run_config.get("batch-size", 32)
+    tensorboard_enabled = context.run_config.get("tensorboard-enabled", True)
+    log_dir = context.run_config.get("log-dir", "logs")
+
+    return FlowerClient(
+        partition_id=partition_id,
+        num_partitions=num_partitions,
+        local_epochs=local_epochs,
+        batch_size=batch_size,
+        tensorboard_enabled=tensorboard_enabled,
+        log_dir=log_dir,
+    ).to_client()
+
+
 # Create the ClientApp
-app = ClientApp()
-
-
-@app.train()
-def train_fn(msg: Message, context: Context) -> Message:
-    """Train the model on local data.
-
-    Receives model weights from server, trains locally, and returns updated weights.
-
-    Args:
-        msg: Message containing model weights and training config
-        context: Flower context with run and node configuration
-
-    Returns:
-        Message with updated model weights and training metrics
-    """
-    # Get node configuration
-    partition_id = context.node_config["partition-id"]
-    num_partitions = context.node_config["num-partitions"]
-
-    # Get run configuration
-    batch_size = context.run_config["batch-size"]
-    local_epochs = context.run_config["local-epochs"]
-    tensorboard_enabled = context.run_config.get("tensorboard-enabled", True)
-    log_dir = context.run_config.get("log-dir", "logs")
-
-    # Get training hyperparameters from server
-    lr = msg.content["config"]["lr"]
-
-    # Initialize model with received weights
-    model = Net()
-    state_dict = msg.content["arrays"].to_torch_state_dict()
-    model.load_state_dict(state_dict)
-
-    # Get device and load data
-    device = get_device()
-    trainloader, _ = load_data(partition_id, num_partitions, batch_size)
-
-    print(f"[Client {partition_id}] Training on {device} with {len(trainloader.dataset)} samples")
-
-    # Train the model
-    train_loss = train(model, trainloader, local_epochs, lr, device)
-
-    print(f"[Client {partition_id}] Training loss: {train_loss:.4f}")
-
-    # Log to TensorBoard
-    if tensorboard_enabled:
-        logger = get_client_logger(partition_id, log_dir=log_dir)
-        # Note: We don't have round number in client context, log with step=0
-        # Server-side logging tracks per-round metrics
-        logger.log_scalar("local/train_loss", train_loss, 0)
-        logger.flush()
-
-    # Build response message
-    model_record = ArrayRecord(model.state_dict())
-    metrics = {
-        "train_loss": train_loss,
-        "num-examples": len(trainloader.dataset),
-    }
-    metric_record = MetricRecord(metrics)
-    content = RecordDict({"arrays": model_record, "metrics": metric_record})
-
-    return Message(content=content, reply_to=msg)
-
-
-@app.evaluate()
-def evaluate_fn(msg: Message, context: Context) -> Message:
-    """Evaluate the model on local test data.
-
-    Args:
-        msg: Message containing model weights to evaluate
-        context: Flower context with configuration
-
-    Returns:
-        Message with evaluation metrics
-    """
-    # Get node configuration
-    partition_id = context.node_config["partition-id"]
-    num_partitions = context.node_config["num-partitions"]
-
-    # Get run configuration
-    batch_size = context.run_config["batch-size"]
-    tensorboard_enabled = context.run_config.get("tensorboard-enabled", True)
-    log_dir = context.run_config.get("log-dir", "logs")
-
-    # Initialize model with received weights
-    model = Net()
-    state_dict = msg.content["arrays"].to_torch_state_dict()
-    model.load_state_dict(state_dict)
-
-    # Get device and load data
-    device = get_device()
-    _, testloader = load_data(partition_id, num_partitions, batch_size)
-
-    print(f"[Client {partition_id}] Evaluating on {device} with {len(testloader.dataset)} samples")
-
-    # Evaluate the model
-    eval_loss, eval_accuracy = test(model, testloader, device)
-
-    print(f"[Client {partition_id}] Eval loss: {eval_loss:.4f}, Accuracy: {eval_accuracy:.4f}")
-
-    # Log to TensorBoard
-    if tensorboard_enabled:
-        logger = get_client_logger(partition_id, log_dir=log_dir)
-        logger.log_scalar("local/eval_loss", eval_loss, 0)
-        logger.log_scalar("local/eval_accuracy", eval_accuracy, 0)
-        logger.flush()
-
-    # Build response message (no model weights needed for evaluation)
-    metrics = {
-        "eval_loss": eval_loss,
-        "eval_acc": eval_accuracy,
-        "num-examples": len(testloader.dataset),
-    }
-    metric_record = MetricRecord(metrics)
-    content = RecordDict({"metrics": metric_record})
-
-    return Message(content=content, reply_to=msg)
+app = ClientApp(client_fn=client_fn)

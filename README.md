@@ -16,7 +16,7 @@ A production-ready Flower FL boilerplate using the Deployment Engine (SuperLink/
 
 ```bash
 # Clone the repository
-git clone <your-repo-url> flower-boilerplate
+rad clone <your-repo-url> flower-boilerplate
 cd flower-boilerplate
 
 # Run setup script (creates venv, installs dependencies)
