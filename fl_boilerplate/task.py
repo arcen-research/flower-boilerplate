@@ -1,4 +1,4 @@
-"""pytorchexample: A Flower / PyTorch app."""
+"""fl_boilerplate: A Flower / PyTorch app for heterogeneous edge devices."""
 
 import torch
 import torch.nn as nn
