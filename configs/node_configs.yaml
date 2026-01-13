@@ -1,0 +1,40 @@
+# Node Configuration Reference
+#
+# This file documents the node configurations for your FL deployment.
+# The actual node configs are passed via --node-config when starting SuperNodes.
+
+# Example deployment with 2 clients:
+nodes:
+  # MacBook M4 (Server - runs SuperLink)
+  server:
+    role: superlink
+    address: "192.168.1.100"  # Replace with actual IP
+    ports:
+      fleet_api: 9092  # SuperNode connections
+      exec_api: 9093   # flwr run connections
+
+  # Linux PC (Client 0)
+  linux_client:
+    role: supernode
+    partition_id: 0
+    num_partitions: 2
+    superlink: "192.168.1.100:9092"
+    device: "cuda"  # If NVIDIA GPU available, otherwise "cpu"
+
+  # Raspberry Pi 4B (Client 1)
+  raspberry_pi:
+    role: supernode
+    partition_id: 1
+    num_partitions: 2
+    superlink: "192.168.1.100:9092"
+    device: "cpu"
+    notes:
+      - "Use smaller batch sizes (16-32) due to 4GB RAM"
+      - "Training is slower on ARM CPU"
+
+# Training configuration (set in pyproject.toml or via --run-config)
+training:
+  num_server_rounds: 3
+  local_epochs: 1
+  batch_size: 32  # Reduce for Raspberry Pi
+  learning_rate: 0.01

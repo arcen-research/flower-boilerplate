@@ -1,0 +1,68 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "fl-boilerplate"
+version = "0.1.0"
+description = "Flower Federated Learning Boilerplate for heterogeneous deployments"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+dependencies = [
+    "flwr[simulation]>=1.17.0",
+    "flwr-datasets[vision]>=0.5.0",
+    "torch>=2.2.0",
+    "torchvision>=0.17.0",
+    "tensorboard>=2.16.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.3.0",
+    "pytest>=8.0.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["fl_boilerplate"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+# Flower app configuration
+[tool.flwr.app]
+publisher = "local"
+
+[tool.flwr.app.components]
+serverapp = "fl_boilerplate.server_app:app"
+clientapp = "fl_boilerplate.client_app:app"
+
+[tool.flwr.app.config]
+# Training configuration
+num-server-rounds = 3
+local-epochs = 1
+batch-size = 32
+learning-rate = 0.01
+fraction-evaluate = 1.0
+
+# Logging
+tensorboard-enabled = true
+log-dir = "logs"
+
+# Federation configuration for local testing (all on same machine)
+[tool.flwr.federations.local-deployment]
+address = "127.0.0.1:9093"
+insecure = true
+
+# Federation configuration for distributed deployment
+# Override address with: flwr run . distributed --run-config "server-address=<YOUR_SERVER_IP>:9093"
+[tool.flwr.federations.distributed]
+address = "127.0.0.1:9093"
+insecure = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N"]
