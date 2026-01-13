@@ -6,6 +6,7 @@ from flwr.serverapp import Grid, ServerApp
 from flwr.serverapp.strategy import FedAvg
 
 from fl_boilerplate.task import Net, load_centralized_dataset, test
+from fl_boilerplate.tensorboard_utils import get_server_logger
 
 # Create ServerApp
 app = ServerApp()
@@ -14,6 +15,10 @@ app = ServerApp()
 @app.main()
 def main(grid: Grid, context: Context) -> None:
     """Main entry point for the ServerApp."""
+
+    # Initialize TensorBoard logger
+    logger = get_server_logger()
+    print("\nTensorBoard logging enabled. Run: tensorboard --logdir=logs")
 
     # Read run config
     fraction_evaluate: float = context.run_config["fraction-evaluate"]
@@ -45,6 +50,9 @@ def main(grid: Grid, context: Context) -> None:
 def global_evaluate(server_round: int, arrays: ArrayRecord) -> MetricRecord:
     """Evaluate model on central data."""
 
+    # Get server logger
+    logger = get_server_logger()
+
     # Load the model and initialize it with the received weights
     model = Net()
     model.load_state_dict(arrays.to_torch_state_dict())
@@ -56,6 +64,14 @@ def global_evaluate(server_round: int, arrays: ArrayRecord) -> MetricRecord:
 
     # Evaluate the global model on the test set
     test_loss, test_acc = test(model, test_dataloader, device)
+
+    # Log metrics to TensorBoard
+    logger.log_round_metrics(
+        round_num=server_round,
+        eval_loss=test_loss,
+        eval_accuracy=test_acc,
+    )
+    logger.flush()
 
     # Return the evaluation metrics
     return MetricRecord({"accuracy": test_acc, "loss": test_loss})
