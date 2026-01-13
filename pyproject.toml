@@ -45,10 +45,6 @@ batch-size = 32
 learning-rate = 0.01
 fraction-evaluate = 1.0
 
-# Logging
-tensorboard-enabled = true
-log-dir = "logs"
-
 # Federation configuration for local testing (all on same machine)
 [tool.flwr.federations.local-deployment]
 address = "127.0.0.1:9093"

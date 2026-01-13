@@ -7,7 +7,6 @@ from flwr.client import ClientApp, NumPyClient
 from flwr.common import Context
 
 from fl_boilerplate.task import Net, get_device, load_data, train, test
-from fl_boilerplate.tensorboard_utils import get_client_logger
 
 
 class FlowerClient(NumPyClient):
@@ -19,15 +18,11 @@ class FlowerClient(NumPyClient):
         num_partitions: int,
         local_epochs: int,
         batch_size: int,
-        tensorboard_enabled: bool,
-        log_dir: str,
     ):
         self.partition_id = partition_id
         self.num_partitions = num_partitions
         self.local_epochs = local_epochs
         self.batch_size = batch_size
-        self.tensorboard_enabled = tensorboard_enabled
-        self.log_dir = log_dir
 
         # Initialize model and device
         self.model = Net()
@@ -74,13 +69,7 @@ class FlowerClient(NumPyClient):
             self.device,
         )
 
-        print(f"[Client {self.partition_id}] Round {server_round}: Loss = {train_loss:.4f}")
-
-        # Log to TensorBoard
-        if self.tensorboard_enabled:
-            logger = get_client_logger(self.partition_id, log_dir=self.log_dir)
-            logger.log_scalar("train/loss", train_loss, server_round)
-            logger.flush()
+        print(f"[Client {self.partition_id}] Round {server_round}: Training Loss = {train_loss:.4f}")
 
         # Return updated parameters and metrics
         return (
@@ -100,14 +89,7 @@ class FlowerClient(NumPyClient):
         # Evaluate the model
         eval_loss, eval_accuracy = test(self.model, self.testloader, self.device)
 
-        print(f"[Client {self.partition_id}] Round {server_round}: Loss = {eval_loss:.4f}, Accuracy = {eval_accuracy:.4f}")
-
-        # Log to TensorBoard
-        if self.tensorboard_enabled:
-            logger = get_client_logger(self.partition_id, log_dir=self.log_dir)
-            logger.log_scalar("eval/loss", eval_loss, server_round)
-            logger.log_scalar("eval/accuracy", eval_accuracy, server_round)
-            logger.flush()
+        print(f"[Client {self.partition_id}] Round {server_round}: Eval Loss = {eval_loss:.4f}, Accuracy = {eval_accuracy:.2%}")
 
         return (
             eval_loss,
@@ -125,16 +107,12 @@ def client_fn(context: Context):
     # Get run configuration
     local_epochs = context.run_config.get("local-epochs", 1)
     batch_size = context.run_config.get("batch-size", 32)
-    tensorboard_enabled = context.run_config.get("tensorboard-enabled", True)
-    log_dir = context.run_config.get("log-dir", "logs")
 
     return FlowerClient(
         partition_id=partition_id,
         num_partitions=num_partitions,
         local_epochs=local_epochs,
         batch_size=batch_size,
-        tensorboard_enabled=tensorboard_enabled,
-        log_dir=log_dir,
     ).to_client()
 
 

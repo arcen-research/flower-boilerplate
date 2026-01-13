@@ -6,10 +6,8 @@ import torch
 from flwr.common import Context, ndarrays_to_parameters, parameters_to_ndarrays
 from flwr.server import ServerApp
 from flwr.server.strategy import FedAvg
-from flwr.server.workflow import DefaultWorkflow
 
 from fl_boilerplate.task import Net, get_device
-from fl_boilerplate.tensorboard_utils import close_all_loggers, get_server_logger
 
 # Create the ServerApp
 app = ServerApp()
@@ -24,7 +22,7 @@ def get_initial_parameters():
 
 
 @app.main()
-def main(driver, context: Context) -> None:
+def main(grid, context: Context) -> None:
     """Main entry point for the ServerApp.
 
     Coordinates federated learning by:
@@ -34,7 +32,7 @@ def main(driver, context: Context) -> None:
     4. Saving the final model
 
     Args:
-        driver: Flower Driver for communicating with clients
+        grid: Flower Grid for communicating with clients
         context: Flower context with run configuration
     """
     # Read run configuration
@@ -57,14 +55,7 @@ def main(driver, context: Context) -> None:
     print(f"  - Fraction fit: {fraction_fit}")
     print(f"  - Fraction evaluate: {fraction_evaluate}")
     print(f"  - Min clients: {min_available_clients}")
-    print(f"  - TensorBoard: {'enabled' if tensorboard_enabled else 'disabled'}")
     print(f"{'='*60}\n")
-
-    # Initialize TensorBoard logger
-    if tensorboard_enabled:
-        tb_logger = get_server_logger(log_dir=log_dir)
-    else:
-        tb_logger = None
 
     # Get device for any server-side computation
     device = get_device()
@@ -105,14 +96,13 @@ def main(driver, context: Context) -> None:
 
         aggregated = {"train_loss": train_loss, "num_examples": total_examples}
 
-        # Log to TensorBoard
-        if tb_logger and metrics:
-            # Get round from first client's metrics if available
+        # Log to console
+        if metrics:
             _, first_metrics = metrics[0]
             server_round = first_metrics.get("server_round", 0)
-            tb_logger.log_scalar("aggregated/train_loss", train_loss, server_round)
-            tb_logger.log_scalar("aggregated/train_examples", total_examples, server_round)
-            tb_logger.flush()
+            print(f"\n[Round {server_round}] Training Results:")
+            print(f"  Aggregated Loss: {train_loss:.4f}")
+            print(f"  Total Examples: {total_examples}")
 
         return aggregated
 
@@ -138,17 +128,19 @@ def main(driver, context: Context) -> None:
             "num_examples": total_examples,
         }
 
-        # Log to TensorBoard
-        if tb_logger and metrics:
+        # Log to console
+        if metrics:
             _, first_metrics = metrics[0]
             server_round = first_metrics.get("server_round", 0)
-            tb_logger.log_scalar("aggregated/eval_loss", eval_loss, server_round)
-            tb_logger.log_scalar("aggregated/eval_accuracy", eval_acc, server_round)
-            tb_logger.flush()
+            print(f"[Round {server_round}] Evaluation Results:")
+            print(f"  Aggregated Loss: {eval_loss:.4f}")
+            print(f"  Aggregated Accuracy: {eval_acc:.2%}")
+            print(f"  Total Examples: {total_examples}")
+            print(f"{'='*60}")
 
         return aggregated
 
-    # Initialize FedAvg strategy
+    # Initialize FedAvg strategy (using legacy parameter names for compatibility)
     strategy = FedAvg(
         fraction_fit=fraction_fit,
         fraction_evaluate=fraction_evaluate,
@@ -162,54 +154,9 @@ def main(driver, context: Context) -> None:
         evaluate_metrics_aggregation_fn=evaluate_metrics_aggregation_fn,
     )
 
-    # Run federated learning using DefaultWorkflow
+    # Run federated learning
     print(f"\nStarting FedAvg for {num_rounds} rounds...\n")
-
-    workflow = DefaultWorkflow(strategy)
-    workflow(driver, context, num_rounds)
-
-    # Get final parameters from strategy
-    print(f"\n{'='*60}")
-    print("Federated Learning Complete")
-    print(f"{'='*60}")
-
-    # Save final model
-    if strategy.parameters is not None:
-        output_dir = Path("outputs")
-        output_dir.mkdir(exist_ok=True)
-        model_path = output_dir / "final_model.pt"
-
-        print(f"\nSaving final model to {model_path}...")
-
-        # Convert parameters back to state dict
-        final_ndarrays = parameters_to_ndarrays(strategy.parameters)
-        model = Net()
-        state_dict = model.state_dict()
-
-        # Map ndarrays back to state dict keys
-        for key, ndarray in zip(state_dict.keys(), final_ndarrays):
-            state_dict[key] = torch.from_numpy(ndarray)
-
-        torch.save(state_dict, model_path)
-        print("Model saved successfully!")
-
-        # Also save a checkpoint with metadata
-        checkpoint_path = output_dir / "checkpoint.pt"
-        checkpoint = {
-            "model_state_dict": state_dict,
-            "num_rounds": num_rounds,
-            "learning_rate": lr,
-        }
-        torch.save(checkpoint, checkpoint_path)
-        print(f"Checkpoint saved to {checkpoint_path}")
-    else:
-        print("\nWarning: No final parameters available to save.")
-
-    # Clean up TensorBoard loggers
-    if tb_logger:
-        tb_logger.flush()
-    close_all_loggers()
-
-    print(f"\n{'='*60}")
-    print("Server shutdown complete")
-    print(f"{'='*60}\n")
+    
+    # Return the strategy - the ServerApp framework will handle execution
+    # Post-processing and model saving would need to be done via evaluate_fn callback
+    return strategy
