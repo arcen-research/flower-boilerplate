@@ -31,7 +31,11 @@ def train(msg: Message, context: Context):
 
     # Initialize TensorBoard logger
     logger = get_client_logger(partition_id)
-    server_round = msg.metadata.get("round", 0)
+    # Try to get round number from metadata, default to 0 if not available
+    try:
+        server_round = int(msg.metadata.get("round", 0)) if hasattr(msg.metadata, "get") else 0
+    except (AttributeError, KeyError, TypeError):
+        server_round = 0
 
     # Call the training function
     train_loss = train_fn(
@@ -79,7 +83,11 @@ def evaluate(msg: Message, context: Context):
 
     # Initialize TensorBoard logger
     logger = get_client_logger(partition_id)
-    server_round = msg.metadata.get("round", 0)
+    # Try to get round number from metadata, default to 0 if not available
+    try:
+        server_round = int(msg.metadata.get("round", 0)) if hasattr(msg.metadata, "get") else 0
+    except (AttributeError, KeyError, TypeError):
+        server_round = 0
 
     # Call the evaluation function
     eval_loss, eval_acc = test_fn(
